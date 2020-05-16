@@ -1,0 +1,279 @@
+---
+title: "Упражнение №8"
+author: "Маркин Артём"
+date: "13 05 2020"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Модели на основе деревьев      
+
+Необходимо построить две модели для прогноза на основе дерева решений:  
+
+1. Для непрерывной зависимой переменной;
+2. Для категориальной зависимой переменной.   
+
+Данные и переменные указаны в таблице с вариантами.   
+Ядро генератора случайных чисел -- номер варианта.
+
+**Задания**
+
+Для каждой модели:   
+
+1. Указать настроечные параметры метода из своего варианта (например: количество узлов, количество предикторов, скорость обучения).
+2. Подогнать модель на обучающей выборке (50% наблюдений). Рассчитать MSE на тестовой выборке.       
+3. Перестроить модель с помощью метода, указанного в варианте.    
+4. Сделать прогноз по модели с подобранными в п.3 параметрами на тестовой выборке, оценить его точность и построить график «прогноз-реализация».
+
+## Вариант - 12
+
+*Модели*: бустинг (скорость обучения).   
+*Данные*: `Auto {ISLR}'.
+
+# Деревья решений
+
+```{r, warning = F, message = F}
+# Загрузка пакетов
+library('tree')              # деревья tree()
+library('GGally')            # матричный график разброса ggpairs()
+library('ISLR')              # набор данных Auto
+library('gbm')               # бустинг
+
+# Загрузка данных Auto
+data('Auto')
+
+# Название столбцов переменных
+names(Auto)
+
+# Размерность данных
+dim(Auto)
+
+# Ядро генератора случайных чисел
+my.seed <- 12
+```
+
+## Модель 1 (для непрерывной зависимой переменной `mpg`)
+
+```{r}
+# Избавляемся от Name
+Auto <- Auto[, -9]
+
+# ?Auto
+head(Auto)
+
+# Матричные графики разброса переменных
+p <- ggpairs(Auto[, c(1, 2:3)])
+suppressMessages(print(p))
+p <- ggpairs(Auto[, c(1, 4:5)])
+suppressMessages(print(p))
+p <- ggpairs(Auto[, c(1, 6:8)])
+suppressMessages(print(p))
+
+# Обучающая выборка
+set.seed(my.seed)
+# Обучающая выборка - 50%
+train <- sample(1:nrow(Auto), nrow(Auto)/2)
+```
+
+Построим дерево регрессии для зависимой переменной `mpg`: миль на галлон.
+
+```{r, cache = T}
+# Обучаем модель
+tree.auto <- tree(mpg ~ ., Auto, subset = train)
+summary(tree.auto)
+
+# Визуализация
+plot(tree.auto)
+text(tree.auto, pretty = 0)
+tree.auto                    # Посмотреть всё дерево в консоли
+
+# Прогноз по модели 
+yhat <- predict(tree.auto, newdata = Auto[-train, ])
+auto.test <- Auto[-train, "mpg"]
+
+# MSE на тестовой выборке
+mse.test <- mean((yhat - auto.test)^2)
+names(mse.test)[length(mse.test)] <- 'Auto.regr.tree.all'
+mse.test
+
+# Точность прогноза на тестовой выборке
+acc.test <- sum(abs(yhat-auto.test))/sum(auto.test)
+names(acc.test)[length(acc.test)] <- 'Auto.regr.tree.all'
+acc.test
+```
+
+### Бустинг (модель 1)
+
+Проведем бустинг с целью улучшения модели
+
+```{r}
+set.seed(my.seed)
+boost.auto <- gbm(mpg ~ ., data = Auto[train, ], distribution = "gaussian",
+                    n.trees = 5000, interaction.depth = 4)
+# График и таблица относительной важности переменных
+summary(boost.auto)
+
+# прогноз
+yhat.boost <- predict(boost.auto, newdata = Auto[-train, ], n.trees = 5000)
+
+# MSE на тестовой
+mse.test <- c(mse.test, mean((yhat.boost - auto.test)^2))
+names(mse.test)[length(mse.test)] <- 'Auto.boost.opt'
+mse.test
+
+# Точность прогноза на тестовой выборке
+acc.test <- c(acc.test, sum(abs(yhat.boost-auto.test))/sum(auto.test))
+names(acc.test)[length(acc.test)] <- 'Auto.regr.tree'
+acc.test
+```
+
+```{r}
+# Меняем значение гиперпараметра (lambda) на 0.1 -- аргумент shrinkage
+boost.auto <- gbm(mpg ~ ., data = Auto[train, ], distribution = "gaussian",
+                    n.trees = 5000, interaction.depth = 4, 
+                    shrinkage = 0.1, verbose = F)
+
+# Прогноз
+yhat.boost <- predict(boost.auto, newdata = Auto[-train, ], n.trees = 5000)
+
+# MSE а тестовой
+mse.test <- c(mse.test, mean((yhat.boost - auto.test)^2))
+names(mse.test)[length(mse.test)] <- 'Auto.boost.0.1'
+mse.test
+
+# Точность прогноза на тестовой выборке
+acc.test <- c(acc.test, sum(abs(yhat.boost-auto.test))/sum(auto.test))
+names(acc.test)[length(acc.test)] <- 'Auto.regr.tree.0.1'
+acc.test
+
+# График "прогноз - реализация"
+plot(yhat.boost, auto.test)
+# линия идеального прогноза
+abline(0, 1)
+```
+
+Судя по результатам изменение lambda на 0.1 немного повысило ошибку прогноза, поэтому оставим его без измененией.
+MSE модели (с бустингом) без указания lambda на тестовой выборке равна `r round(mse.test['Auto.boost.opt'], 2)`, точность прогноза составила `r round(acc.test['Auto.regr.tree'], 2)`.
+
+## Модель 2 (для категориальной зависимой переменной `high.medv`)
+
+Загрузим таблицу с данными по расходу бензина, лошадиной силе и другая информации для автомобилей и добавим к ней переменную `high.mpg` - миль на галлон:   
+
+* `1`, если миля на галлон >= 29;       
+* `0` - в противном случае.
+
+```{r, warning = F}
+# Новая переменная
+high.mpg <- ifelse(Auto$mpg < 29, '0', '1')
+
+# Присоединяем к таблице данных
+Auto <- cbind(Auto, high.mpg)
+
+# Название столбцов переменных
+names(Auto)
+
+# Размерность данных
+dim(Auto)
+
+# Матричные графики разброса переменных
+p <- ggpairs(Auto[, c(9, 1:2)], aes(color = high.mpg))
+suppressMessages(print(p))
+p <- ggpairs(Auto[, c(9, 3:5)], aes(color = high.mpg))
+suppressMessages(print(p))
+p <- ggpairs(Auto[, c(9, 6:8)], aes(color = high.mpg))
+suppressMessages(print(p))
+```
+
+Судя по графикам, класс `0` превосходит по размеру класс `1` по переменной `high.mpg` приблизительно в 3 раза. Классы на графиках разброса объясняющих переменных сильно смешаны, поэтому модели с непрерывной разрешающей границей вряд ли работают хорошо. Построим дерево для категориального отклика `high.mpg`, отбросив непрерывный отклик `mpg` (мы оставили его на первом графике, чтобы проверить, как сработало разделение по значению `mpg = 29`).
+
+```{r, cache = T}
+# Модель бинарного  дерева
+tree.auto <- tree(high.mpg ~ . -mpg, Auto)
+summary(tree.auto)
+
+# График результата
+plot(tree.auto)                # Ветви
+text(tree.auto, pretty = 0)    # Подписи
+tree.auto                      # Посмотреть всё дерево в консоли
+```
+
+Теперь построим дерево на обучающей выборке и оценим ошибку на тестовой.   
+
+```{r, cache = T}
+# Тестовая выборка
+Auto.test <- Auto[-train,]
+high.mpg.test <- high.mpg[-train]
+
+# Строим дерево на обучающей выборке
+tree.auto <- tree(high.mpg ~ . -mpg, Auto, subset = train)
+
+# Делаем прогноз
+tree.pred <- predict(tree.auto, Auto.test, type = "class")
+
+# Матрица неточностей
+tbl <- table(tree.pred, high.mpg.test)
+tbl
+
+# ACC на тестовой
+acc.test.2 <- sum(diag(tbl))/sum(tbl)
+names(acc.test.2)[length(acc.test.2)] <- 'Auto.class.tree.all.model.2'
+acc.test.2
+```
+
+Обобщённая характеристика точности: доля верных прогнозов: `r round(acc.test.2, 2)`.
+
+### Дерево с обрезкой ветвей (модель 2)
+
+
+```{r}
+set.seed(my.seed)
+boost.auto <- gbm(high.mpg ~ . -mpg, data = Auto[train, ], distribution = "gaussian",
+                    n.trees = 5000, interaction.depth = 4)
+# График и таблица относительной важности переменных
+summary(boost.auto)
+
+# прогноз
+yhat.boost <- predict(boost.auto, newdata = Auto[-train, ], n.trees = 5000)
+
+# MSE на тестовой
+mse.test.2 <- mean((yhat.boost - auto.test)^2)
+names(mse.test.2)[length(mse.test.2)] <- 'Auto.boost.opt.model.2'
+mse.test.2
+
+# Точность прогноза на тестовой выборке
+acc.test.2 <- sum(abs(yhat.boost-auto.test))/sum(auto.test)
+names(acc.test.2)[length(acc.test.2)] <- 'Auto.class.tree.model.2'
+acc.test.2
+```
+
+```{r}
+# Меняем значение гиперпараметра (lambda) на 0.1 -- аргумент shrinkage
+boost.auto <- gbm(high.mpg ~ . -mpg, data = Auto[train, ], distribution = "gaussian",
+                    n.trees = 5000, interaction.depth = 4, 
+                    shrinkage = 0.1, verbose = F)
+
+# Прогноз
+yhat.boost <- predict(boost.auto, newdata = Auto[-train, ], n.trees = 5000)
+
+# MSE а тестовой
+mse.test.2 <- c(mse.test.2, mean((yhat.boost - auto.test)^2))
+names(mse.test.2)[length(mse.test.2)] <- 'Auto.boost.model.2.0.1'
+mse.test.2
+
+# Точность прогноза на тестовой выборке
+acc.test.2 <- c(acc.test.2, sum(abs(yhat.boost-auto.test))/sum(auto.test))
+names(acc.test.2)[length(acc.test.2)] <- 'Auto.class.tree.model.2.0.1'
+acc.test.2
+
+# График "прогноз - реализация"
+plot(yhat.boost, Auto$high.mpg[-train])
+```
+
+Точности моделей на тестовой выборке (при lambda = 0.1 и стандартной) практически совпадают и равны `r round(acc.test.2, 2)`.
